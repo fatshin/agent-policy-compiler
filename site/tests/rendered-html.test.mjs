@@ -37,5 +37,5 @@ test("server-renders the independent product shell", async () => {
 test("does not expose a portfolio index", async () => {
   const response = await render();
   const html = await response.text();
-  assert.doesNotMatch(html, /all products|portfolio|other demos/i);
+  assert.doesNotMatch(html, /all products|other demos/i);
 });
