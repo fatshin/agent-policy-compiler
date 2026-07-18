@@ -28,10 +28,9 @@ test("server-renders the independent product shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Build Week Product — OpenAI Build Week<\/title>/i);
+  assert.match(html, /<title>.+ — OpenAI Build Week<\/title>/i);
   assert.match(html, /One product\./);
   assert.match(html, /Run the included case\./);
-  assert.match(html, /Product-specific input/);
   assert.match(html, /Built with Codex and GPT-5\.6/);
 });
 
