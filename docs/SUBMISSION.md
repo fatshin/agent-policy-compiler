@@ -2,6 +2,9 @@
 
 **Tagline:** Turn policy prose into a decision system you can audit.
 
+**Category:** Developer Tools  
+**Codex Session ID:** `019f7306-7262-7371-a03f-6b99df7129bf`
+
 ## What it does
 
 Agent Policy Compiler converts written operating rules into explicit `ALLOW`,

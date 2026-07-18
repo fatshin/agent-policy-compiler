@@ -21,8 +21,6 @@ SCENARIOS = json.dumps([
     {"id": "S6", "role": "admin", "tool": "delete_production", "external": False, "pii": False, "amount": 0},
     {"id": "S7", "role": "admin", "tool": "rotate_logs", "external": False, "pii": False, "amount": 0},
 ], indent=2)
-ALLOWLISTS = {"support": {"lookup_customer", "draft_reply"}, "finance": {"issue_refund", "lookup_customer"}, "admin": {"*"}}
-
 PRODUCT = Product(
     1, "agent-policy-compiler", "Agent Policy Compiler",
     "Turn natural-language operating rules into testable agent decisions.",
@@ -41,11 +39,29 @@ def compile_policy(policy: str) -> dict[str, Any]:
         match = re.match(r"(POL-\d+):\s*(.+)", line.strip())
         if match:
             citations[match.group(1)] = match.group(2)
+    threshold_match = re.search(r"Refunds above \$([0-9]+(?:\.[0-9]+)?)", policy, re.IGNORECASE)
+    if not threshold_match:
+        raise ValueError("Ambiguous policy: refund approval threshold is missing.")
+    allowlists: dict[str, list[str]] = {}
+    for role, tools in re.findall(r"(?im)^POL-\d+:\s*(Support|Finance)\s+may use\s+(.+?)\.$", policy):
+        allowlists[role.lower()] = [tool.strip() for tool in re.split(r"\s+and\s+|,\s*", tools)]
+    if re.search(r"(?im)^POL-\d+:\s*Admin may use every registered tool\.$", policy):
+        allowlists["admin"] = ["*"]
+    if set(allowlists) != {"support", "finance", "admin"}:
+        raise ValueError("Ambiguous policy: one or more role tool lists could not be compiled.")
+    approval_tools = ["delete_production"] if "production deletion" in policy.lower() else []
     return {
         "version": "policy-ir/v1",
+        "refund_approval_above": float(threshold_match.group(1)),
+        "role_allowlists": allowlists,
+        "approval_tools": approval_tools,
         "rules": [
             {"id": "POL-01", "predicate": "external && pii", "effect": "BLOCK"},
-            {"id": "POL-02", "predicate": "amount > 500 || tool == delete_production", "effect": "APPROVAL_REQUIRED"},
+            {
+                "id": "POL-02",
+                "predicate": f"amount > {threshold_match.group(1)} || tool in approval_tools",
+                "effect": "APPROVAL_REQUIRED",
+            },
             {"id": "POL-03-05", "predicate": "tool not in role_allowlist", "effect": "BLOCK"},
         ],
         "citations": citations,
@@ -56,10 +72,13 @@ def evaluate(ir: dict[str, Any], scenario: dict[str, Any]) -> dict[str, str]:
     if scenario.get("external") and scenario.get("pii"):
         return {"decision": "BLOCK", "rule": "POL-01", "reason": ir["citations"]["POL-01"]}
     role, tool = str(scenario.get("role", "")), str(scenario.get("tool", ""))
-    allowed = ALLOWLISTS.get(role, set())
+    allowed = set(ir["role_allowlists"].get(role, []))
     if "*" not in allowed and tool not in allowed:
         return {"decision": "BLOCK", "rule": "POL-03-05", "reason": f"{role} cannot use {tool}"}
-    if float(scenario.get("amount", 0)) > 500 or tool == "delete_production":
+    if (
+        float(scenario.get("amount", 0)) > ir["refund_approval_above"]
+        or tool in ir["approval_tools"]
+    ):
         return {"decision": "APPROVAL_REQUIRED", "rule": "POL-02", "reason": ir["citations"]["POL-02"]}
     return {"decision": "ALLOW", "rule": "ALLOWLIST", "reason": f"{role} may use {tool}"}
 
@@ -81,6 +100,7 @@ def acceptance(result: dict[str, Any]) -> tuple[bool, dict[str, bool]]:
         "seven_scenarios": len(result["items"]) == 7,
         "expected_decisions": result["metrics"] == {"ALLOW": 3, "BLOCK": 2, "APPROVAL_REQUIRED": 2},
         "source_citations": all(item["reason"] for item in result["items"]),
+        "compiled_threshold": result["artifact"]["refund_approval_above"] == 500,
+        "compiled_allowlists": result["artifact"]["role_allowlists"]["support"] == ["lookup_customer", "draft_reply"],
     }
     return all(checks.values()), checks
-
